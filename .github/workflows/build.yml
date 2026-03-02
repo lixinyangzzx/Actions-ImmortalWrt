@@ -40,10 +40,14 @@ jobs:
 
       - name: 添加 10G 交换分区 (Add 10G swap space)
         run: |
-          sudo fallocate -l 10G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          # 修复 Text file busy 错误：改用 /mnt/swapfile 路径，先清理旧交换分区
+          sudo swapoff -a || true
+          sudo rm -rf /mnt/swapfile /swapfile || true
+          # 用 dd 替代 fallocate（兼容性更好）
+          sudo dd if=/dev/zero of=/mnt/swapfile bs=1G count=10
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
           sudo swapon --show
 
       - name: 配置终端环境 (Configure terminal environment)
@@ -127,10 +131,14 @@ jobs:
 
       - name: 添加 10G 交换分区 (Add 10G swap space)
         run: |
-          sudo fallocate -l 10G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          # 修复 Text file busy 错误：改用 /mnt/swapfile 路径，先清理旧交换分区
+          sudo swapoff -a || true
+          sudo rm -rf /mnt/swapfile /swapfile || true
+          # 用 dd 替代 fallocate（兼容性更好）
+          sudo dd if=/dev/zero of=/mnt/swapfile bs=1G count=10
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
           sudo swapon --show
 
       - name: 配置终端环境 (Configure terminal environment)
