@@ -60,6 +60,7 @@ jobs:
           echo "TERM=xterm-256color" >> $GITHUB_ENV
           echo "NCURSES_NO_UTF8_ACS=1" >> $GITHUB_ENV
           echo "FORCE_UNSAFE_CONFIGURE=1" >> $GITHUB_ENV
+          echo "FORCE=1" >> $GITHUB_ENV  # 新增：强制跳过预编译检查
 
       - name: 克隆当前仓库 (Clone current repo)
         uses: actions/checkout@v4
@@ -90,8 +91,9 @@ jobs:
       - name: 生成默认配置跳过 menuconfig (Generate defconfig to skip menuconfig)
         working-directory: ImmortalWrt
         run: |
-          make defconfig V=s
-          make oldconfig V=s
+          # 关键：添加 FORCE=1 跳过预编译检查
+          make FORCE=1 defconfig V=s
+          make FORCE=1 oldconfig V=s
 
       - name: 编译前上传配置 (Upload config before build)
         uses: actions/upload-artifact@v4
@@ -105,13 +107,13 @@ jobs:
         if: ${{inputs.multithreading == true}}
         working-directory: ImmortalWrt
         run: |
-          # 限制线程数为2（适配GitHub免费版2核），失败自动降级为单线程
-          make -j2 V=s || make -j1 V=s
+          # 限制线程数为2（适配GitHub免费版2核），失败自动降级为单线程，添加 FORCE=1
+          make FORCE=1 -j2 V=s || make FORCE=1 -j1 V=s
 
       - name: 单线程编译 ImmortalWrt (Build ImmortalWrt single thread)
         if: ${{inputs.multithreading == false}}
         working-directory: ImmortalWrt
-        run: make -j1 V=s
+        run: make FORCE=1 -j1 V=s
 
       - name: 上传编译结果到 Artifact (Upload build result to Artifact)
         uses: actions/upload-artifact@v4
@@ -149,6 +151,7 @@ jobs:
           echo "TERM=xterm-256color" >> $GITHUB_ENV
           echo "NCURSES_NO_UTF8_ACS=1" >> $GITHUB_ENV
           echo "FORCE_UNSAFE_CONFIGURE=1" >> $GITHUB_ENV
+          echo "FORCE=1" >> $GITHUB_ENV  # 新增：强制跳过预编译检查
 
       - name: 克隆当前仓库 (Clone current repo)
         uses: actions/checkout@v4
@@ -186,8 +189,9 @@ jobs:
       - name: 生成默认配置跳过 menuconfig (Generate defconfig to skip menuconfig)
         working-directory: ImmortalWrt
         run: |
-          make defconfig V=s
-          make oldconfig V=s
+          # 关键：添加 FORCE=1 跳过预编译检查
+          make FORCE=1 defconfig V=s
+          make FORCE=1 oldconfig V=s
 
       - name: 编译前上传配置 (Upload config before build)
         uses: actions/upload-artifact@v4
@@ -201,12 +205,13 @@ jobs:
         if: ${{inputs.multithreading == true}}
         working-directory: ImmortalWrt
         run: |
-          make -j2 V=s || make -j1 V=s
+          # 添加 FORCE=1 跳过预编译检查
+          make FORCE=1 -j2 V=s || make FORCE=1 -j1 V=s
 
       - name: 单线程编译 ImmortalWrt (Build ImmortalWrt single thread)
         if: ${{inputs.multithreading == false}}
         working-directory: ImmortalWrt
-        run: make -j1 V=s
+        run: make FORCE=1 -j1 V=s
 
       - name: 上传编译结果到 Artifact (Upload build result to Artifact)
         uses: actions/upload-artifact@v4
