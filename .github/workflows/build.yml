@@ -4,26 +4,26 @@ on:
   workflow_dispatch:
     inputs:
       owner:
-        description: 'ImmortalWrt 仓库的拥有者 (Owner of ImmortalWrt repo)'
+        description: 'ImmortalWrt 仓库的拥有者'
         type: string
         required: true
         default: 'ImmortalWrt'
       repo:
-        description: 'ImmortalWrt 仓库的名字 (Name of ImmortalWrt repo)'
+        description: 'ImmortalWrt 仓库的名字'
         type: string
         required: true
         default: 'ImmortalWrt'
       branch:
-        description: 'ImmortalWrt 仓库的分支 (Branch of ImmortalWrt repo)'
+        description: 'ImmortalWrt 仓库的分支'
         type: string
         required: true
         default: 'openwrt-25.12'
       multithreading:
-        description: '开启多线程编译 (Enable multithreading build)'
+        description: '开启多线程编译'
         type: boolean
         default: true
       ssh:
-        description: '使用 ssh 连接到编译环境 (Connect to the build environment using ssh)'
+        description: '使用 ssh 连接'
         type: boolean
         default: false
 
@@ -31,204 +31,73 @@ jobs:
   build:
     if: ${{inputs.ssh == false}}
     runs-on: ubuntu-latest
-    name: 🚀 编译 (Build)
+    name: 🚀 编译
     steps:
-      - name: 下载编译所需的依赖 (Install the software packages required for compilation)
+      - name: 安装依赖
         run: |
           sudo apt update
           sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
-          # 额外安装 ImmortalWrt 25.12 缺失的依赖
-          sudo apt install -y python3-pip python3-yaml
 
-      - name: 添加 10G 交换分区 (Add 10G swap space)
-        run: |
-          sudo swapoff -a || true
-          sudo rm -rf /mnt/swapfile /swapfile || true
-          sudo dd if=/dev/zero of=/mnt/swapfile bs=1G count=10
-          sudo chmod 600 /mnt/swapfile
-          sudo mkswap /mnt/swapfile
-          sudo swapon /mnt/swapfile
-          sudo swapon --show
-
-      - name: 配置全局环境变量 (Configure global environment)
-        run: |
-          # 强制跳过所有检查的核心配置
-          echo "FORCE=1" >> $GITHUB_ENV
-          echo "TERM=xterm-256color" >> $GITHUB_ENV
-          echo "NCURSES_NO_UTF8_ACS=1" >> $GITHUB_ENV
-          echo "FORCE_UNSAFE_CONFIGURE=1" >> $GITHUB_ENV
-          echo "SKIP_PREREQ_CHECK=1" >> $GITHUB_ENV
-          # 临时修改 toplevel.mk，注释预检查逻辑（终极方案）
-          echo "alias make='make FORCE=1'" >> ~/.bashrc
-          source ~/.bashrc
-
-      - name: 克隆当前仓库 (Clone current repo)
+      - name: 克隆当前仓库
         uses: actions/checkout@v4
 
-      - name: 克隆 ImmortalWrt 仓库 (Clone ImmortalWrt repo)
+      - name: 克隆 ImmortalWrt
         uses: actions/checkout@v4
         with:
           repository: '${{inputs.owner}}/${{inputs.repo}}'
           ref: ${{inputs.branch}}
           path: ImmortalWrt
 
-      - name: 注释预编译检查逻辑 (Comment out prereq check)
+      - name: 直接生成干净 .config（彻底解决格式错误）
         working-directory: ImmortalWrt
         run: |
-          # 直接修改 toplevel.mk，跳过 .prereq-build 检查
-          sudo sed -i '/^\.prereq-build:/c \.prereq-build:' include/toplevel.mk
-          sudo sed -i '/\$(Q)mkdir -p \$(STAGING_DIR_HOST)\/bin/a \\t@true' include/toplevel.mk
-          # 修复 prepare-tmpinfo 阶段的检查
-          sudo sed -i 's/^\(.*prereq-build.*\)/#\1/' include/toplevel.mk
+          cat > .config << 'EOF'
+CONFIG_TARGET_rockchip=y
+CONFIG_TARGET_rockchip_armv8=y
+CONFIG_TARGET_MULTI_PROFILE=y
+CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_huakecloud_guangmiao-g4c=y
+CONFIG_TARGET_KERNEL_PARTSIZE=64
+CONFIG_TARGET_ROOTFS_PARTSIZE=1024
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+EOF
 
-      - name: 复制配置文件 (Copy config files)
-        run: cp -f .config feeds.conf.default diy.sh ImmortalWrt/ || true
-
-      - name: 运行 diy.sh (Run diy.sh)
+      - name: 更新 feeds
         working-directory: ImmortalWrt
         run: |
-          chmod +x diy.sh || true
-          ./diy.sh || true
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-      - name: 更新 feeds (Update feeds)
-        working-directory: ImmortalWrt
-        run: ./scripts/feeds update -a && ./scripts/feeds install -a
-
-      - name: 重新复制配置文件 (Copy config again)
-        run: cp -f .config feeds.conf.default diy.sh ImmortalWrt/ || true
-
-      - name: 生成配置 (Generate config)
+      - name: 非交互生成配置（不弹窗、不卡住）
         working-directory: ImmortalWrt
         run: |
-          export FORCE=1
-          make defconfig V=s
-          make oldconfig V=s
+          make olddefconfig V=s
 
-      - name: 上传配置 (Upload config)
-        uses: actions/upload-artifact@v4
-        with:
-          name: config-before-build
-          path: |
-            ImmortalWrt/feeds.conf.default
-            ImmortalWrt/.config
+      - name: 先编译工具（解决 mkhash 不存在）
+        working-directory: ImmortalWrt
+        run: |
+          make tools/install -j$(nproc) V=s
+          make toolchain/install -j$(nproc) V=s
 
-      - name: 多线程编译 (Multithreading build)
+      - name: 多线程编译
         if: ${{inputs.multithreading == true}}
         working-directory: ImmortalWrt
         run: |
-          export FORCE=1
-          make -j2 V=s || make -j1 V=s
+          make -j2 V=s
 
-      - name: 单线程编译 (Single thread build)
+      - name: 单线程编译
         if: ${{inputs.multithreading == false}}
         working-directory: ImmortalWrt
         run: |
-          export FORCE=1
           make -j1 V=s
 
-      - name: 上传固件 (Upload firmware)
+      - name: 上传固件
         uses: actions/upload-artifact@v4
         with:
-          name: ImmortalWrt-build-result
+          name: ImmortalWrt
           path: ImmortalWrt/bin/targets
 
   build-ssh:
     if: ${{inputs.ssh == true}}
-    name: 🚀 编译 (Build) - SSH
     runs-on: ubuntu-latest
     steps:
-      - name: 安装依赖 (Install dependencies)
-        run: |
-          sudo apt update
-          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
-          sudo apt install -y python3-pip python3-yaml
-
-      - name: 添加交换分区 (Add swap)
-        run: |
-          sudo swapoff -a || true
-          sudo rm -rf /mnt/swapfile /swapfile || true
-          sudo dd if=/dev/zero of=/mnt/swapfile bs=1G count=10
-          sudo chmod 600 /mnt/swapfile
-          sudo mkswap /mnt/swapfile
-          sudo swapon /mnt/swapfile
-          sudo swapon --show
-
-      - name: 配置环境变量 (Configure env)
-        run: |
-          echo "FORCE=1" >> $GITHUB_ENV
-          echo "TERM=xterm-256color" >> $GITHUB_ENV
-          echo "NCURSES_NO_UTF8_ACS=1" >> $GITHUB_ENV
-          echo "FORCE_UNSAFE_CONFIGURE=1" >> $GITHUB_ENV
-          echo "SKIP_PREREQ_CHECK=1" >> $GITHUB_ENV
-          echo "alias make='make FORCE=1'" >> ~/.bashrc
-          source ~/.bashrc
-
-      - name: 克隆仓库 (Clone repos)
-        uses: actions/checkout@v4
-
-      - name: 克隆 ImmortalWrt (Clone ImmortalWrt)
-        uses: actions/checkout@v4
-        with:
-          repository: '${{inputs.owner}}/${{inputs.repo}}'
-          ref: ${{inputs.branch}}
-          path: ImmortalWrt
-
-      - name: 注释预检查 (Comment prereq check)
-        working-directory: ImmortalWrt
-        run: |
-          sudo sed -i '/^\.prereq-build:/c \.prereq-build:' include/toplevel.mk
-          sudo sed -i '/\$(Q)mkdir -p \$(STAGING_DIR_HOST)\/bin/a \\t@true' include/toplevel.mk
-          sudo sed -i 's/^\(.*prereq-build.*\)/#\1/' include/toplevel.mk
-
-      - name: 复制配置 (Copy config)
-        run: cp -f .config feeds.conf.default diy.sh ImmortalWrt/ || true
-
-      - name: 运行 diy.sh (Run diy.sh)
-        working-directory: ImmortalWrt
-        run: |
-          chmod +x diy.sh || true
-          ./diy.sh || true
-
-      - name: 更新 feeds (Update feeds)
-        working-directory: ImmortalWrt
-        run: ./scripts/feeds update -a && ./scripts/feeds install -a
-
-      - name: 开启 SSH (Start SSH)
-        uses: lhotari/action-upterm@v1
-        with:
-          wait-timeout-minutes: 20
-
-      - name: 生成配置 (Generate config)
-        working-directory: ImmortalWrt
-        run: |
-          export FORCE=1
-          make defconfig V=s
-          make oldconfig V=s
-
-      - name: 上传配置 (Upload config)
-        uses: actions/upload-artifact@v4
-        with:
-          name: config-before-build
-          path: |
-            ImmortalWrt/feeds.conf.default
-            ImmortalWrt/.config
-
-      - name: 多线程编译 (Multithreading build)
-        if: ${{inputs.multithreading == true}}
-        working-directory: ImmortalWrt
-        run: |
-          export FORCE=1
-          make -j2 V=s || make -j1 V=s
-
-      - name: 单线程编译 (Single thread build)
-        if: ${{inputs.multithreading == false}}
-        working-directory: ImmortalWrt
-        run: |
-          export FORCE=1
-          make -j1 V=s
-
-      - name: 上传固件 (Upload firmware)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ImmortalWrt-build-result
-          path: ImmortalWrt/bin/targets
+      - run: echo "SSH 模式暂时关闭，避免卡住"
