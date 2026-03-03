@@ -36,15 +36,15 @@ jobs:
       - name: 缓存编译依赖 (Cache build dependencies)
         uses: actions/cache@v4
         with:
-          path: |
-            ImmortalWrt/staging_dir
-            ImmortalWrt/dl
-            ImmortalWrt/feeds
-            ~/.ccache
+          path:
+            - ImmortalWrt/staging_dir
+            - ImmortalWrt/dl
+            - ImmortalWrt/feeds
+            - ~/.ccache
           key: ${{ runner.os }}-immortalwrt-verify-${{ hashFiles('ImmortalWrt/.config', 'ImmortalWrt/feeds.conf.default') }}
-          restore-keys: |
-            ${{ runner.os }}-immortalwrt-verify-
-            ${{ runner.os }}-immortalwrt-
+          restore-keys:
+            - ${{ runner.os }}-immortalwrt-verify-
+            - ${{ runner.os }}-immortalwrt-
 
       - name: 克隆当前仓库 (Clone current repo)
         uses: actions/checkout@v4
@@ -111,17 +111,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: verify-logs
-          path: |
-            ImmortalWrt/verify_dtb.dts
-            ImmortalWrt/build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/linux-*/.config
-            ImmortalWrt/staging_dir/target-aarch64_generic_musl/logs/*
+          path:
+            - ImmortalWrt/verify_dtb.dts
+            - ImmortalWrt/build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/linux-*/.config
+            - ImmortalWrt/staging_dir/target-aarch64_generic_musl/logs/*
         if: always()
 
       - name: 上传生成的 DTB/内核文件 (Upload DTB & Kernel files)
         uses: actions/upload-artifact@v4
         with:
           name: dtb-kernel-files
-          path: |
-            ImmortalWrt/bin/targets/rockchip/armv8/rk3399-guangmiao-g4c.dtb
-            ImmortalWrt/bin/targets/rockchip/armv8/Image
+          path:
+            - ImmortalWrt/bin/targets/rockchip/armv8/rk3399-guangmiao-g4c.dtb
+            - ImmortalWrt/bin/targets/rockchip/armv8/Image
         if: always()
