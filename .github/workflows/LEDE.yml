@@ -1,4 +1,4 @@
-name: 🚀 LEDE编译 (Build)
+name: 🚀 编译LEDE (Build)
 
 on:
   workflow_dispatch:
@@ -7,17 +7,17 @@ on:
         description: 'LEDE 仓库的拥有者 (Owner of LEDE repo)'
         type: string
         required: true
-        default: 'coolsnowwolf'
+        default: 'coolsnowwolf'  # 默认改为coolsnowwolf
       repo:
         description: 'LEDE 仓库的名字 (Name of LEDE repo)'
         type: string
         required: true
-        default: 'lede'
+        default: 'lede'  # 默认改为lede
       branch:
         description: 'LEDE 仓库的分支 (Branch of LEDE repo)'
         type: string
         required: true
-        default: 'master'
+        default: 'master'  # LEDE默认分支是master
       multithreading:
         description: '开启多线程编译 (Enable multithreading build)'
         type: boolean
@@ -35,15 +35,8 @@ jobs:
     steps:
       - name: 下载编译所需的依赖 (Install the software packages required for compilation)
         run: |
-          sudo apt update -y
-          sudo apt full-upgrade -y
-          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-          bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk gcc-multilib g++-multilib gettext \
-          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev \
-          libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev \
-          libssl-dev libtool llvm lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 \
-          python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo \
-          uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+          sudo apt update
+          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
           # 安装ccache加速重复编译
           sudo apt install -y ccache
           echo 'export PATH=/usr/lib/ccache:$PATH' >> $GITHUB_ENV
@@ -52,89 +45,79 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            lede/staging_dir
+            lede/staging_dir  # 路径改为lede
             lede/dl
             lede/feeds
             ~/.ccache
-          key: ${{ runner.os }}-lede-${{ hashFiles('configs/.config', 'configs/feeds.conf.default') }}
+          key: ${{ runner.os }}-lede-${{ hashFiles('lede/.config', 'lede/feeds.conf.default') }}  # 缓存key改为lede
           restore-keys: |
             ${{ runner.os }}-lede-
 
       - name: 克隆当前仓库 (Clone current repo)
         uses: actions/checkout@v4
-        # 创建configs目录存放自定义配置，避免与lede仓库冲突
-        run: |
-          mkdir -p configs
-          mv .config feeds.conf.default diy.sh configs/ || true
 
       - name: 克隆 LEDE 仓库 (Clone LEDE repo)
         uses: actions/checkout@v4
         with:
           repository: '${{ inputs.owner }}/${{ inputs.repo }}'
           ref: ${{ inputs.branch }}
-          path: lede
+          path: lede  # 克隆路径改为lede
           fetch-depth: 0  # 拉取完整历史，避免编译报错
 
-      - name: 复制自定义配置到 LEDE 仓库 (Copy custom config to LEDE repo)
-        run: |
-          cp -f configs/.config configs/feeds.conf.default configs/diy.sh lede/ || true
+      - name: 复制配置文件到 LEDE 仓库 (Copy config to LEDE repo)
+        run: cp -f lede/.config lede/feeds.conf.default lede/diy.sh lede/ || true  # 从lede文件夹读取配置
 
       - name: 运行 diy.sh (Run diy.sh)
-        working-directory: lede
+        working-directory: lede  # 工作目录改为lede
         run: |
           chmod +x diy.sh || true
           ./diy.sh || true
 
       - name: 更新并下载 feeds (Update and download feeds)
-        working-directory: lede
+        working-directory: lede  # 工作目录改为lede
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 再次复制自定义配置到 LEDE 仓库 (Copy custom config to LEDE repo again)
-        run: cp -f configs/.config configs/feeds.conf.default configs/diy.sh lede/ || true
+      - name: 再次复制配置文件到 LEDE 仓库 (Copy config to LEDE repo again)
+        run: cp -f lede/.config lede/feeds.conf.default lede/diy.sh lede/ || true  # 再次从lede文件夹读取配置
 
       - name: 编译前上传配置 (Upload config before build)
         uses: actions/upload-artifact@v4
         with:
           name: config-before-build
           path: |
-            lede/feeds.conf.default
+            lede/feeds.conf.default  # 路径改为lede
             lede/.config
 
       - name: 多线程编译 LEDE (Build LEDE multithreading)
         if: ${{ inputs.multithreading == true }}
-        working-directory: lede
+        working-directory: lede  # 工作目录改为lede
         run: |
-          # 先下载依赖包
-          make download -j$(nproc)
           # 编译并保存完整日志，避免截断
-          make V=s -j$(nproc) 2>&1 | tee compile_full.log
+          make -j$(nproc) V=s 2>&1 | tee compile_full.log
           # 检查编译是否成功
           if [ $? -ne 0 ]; then
             echo "多线程编译失败，尝试单线程重试..."
-            make V=s -j1 2>&1 | tee compile_retry.log
+            make -j1 V=s 2>&1 | tee compile_retry.log
           fi
 
       - name: 单线程编译 LEDE (Build LEDE single thread)
         if: ${{ inputs.multithreading == false }}
-        working-directory: lede
-        run: |
-          # 先下载依赖包
-          make download -j1
-          make V=s -j1 2>&1 | tee compile_full.log
+        working-directory: lede  # 工作目录改为lede
+        run: make -j1 V=s 2>&1 | tee compile_full.log
 
       - name: 上传完整编译日志 (Upload full compile log)
         uses: actions/upload-artifact@v4
         with:
           name: compile-logs
           path: |
-            lede/compile_full.log
+            lede/compile_full.log  # 路径改为lede
             lede/compile_retry.log*
 
       - name: 上传编译结果到 Artifact (Upload build result to Artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: LEDE-build-result
-          path: lede/bin/targets
+          name: LEDE-build-result  # 名称改为LEDE
+          path: lede/bin/targets  # 路径改为lede
         if: always()  # 即使编译失败也上传结果
 
   build-ssh:
@@ -144,32 +127,19 @@ jobs:
     steps:
       - name: 下载编译所需的依赖 (Install the software packages required for compilation)
         run: |
-          sudo apt update -y
-          sudo apt full-upgrade -y
-          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-          bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk gcc-multilib g++-multilib gettext \
-          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev \
-          libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev \
-          libssl-dev libtool llvm lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 \
-          python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo \
-          uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+          sudo apt update
+          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
 
       - name: 克隆当前仓库 (Clone current repo)
         uses: actions/checkout@v4
-        run: |
-          mkdir -p configs
-          mv .config feeds.conf.default diy.sh configs/ || true
 
       - name: 克隆 LEDE 仓库 (Clone LEDE repo)
         uses: actions/checkout@v4
         with:
           repository: '${{ inputs.owner }}/${{ inputs.repo }}'
           ref: ${{ inputs.branch }}
-          path: lede
+          path: lede  # 克隆路径改为lede
           fetch-depth: 0
-
-      - name: 复制自定义配置到 LEDE 仓库 (Copy custom config to LEDE repo)
-        run: cp -f configs/.config configs/feeds.conf.default configs/diy.sh lede/ || true
 
       - name: 开启 SSH 服务 (Start SSH service)
         uses: lhotari/action-upterm@v1
@@ -181,37 +151,36 @@ jobs:
       #        uses: mxschmitt/action-tmate@v3
       #        timeout-minutes: 15
 
+      - name: 复制配置文件到 LEDE 仓库 (Copy config to LEDE repo)
+        run: cp -f lede/.config lede/feeds.conf.default lede/diy.sh lede/ || true  # 从lede文件夹读取配置
+
       - name: 编译前上传配置 (Upload config before build)
         uses: actions/upload-artifact@v4
         with:
-          name: config-before-build-ssh
+          name: config-before-build
           path: |
-            lede/feeds.conf.default
+            lede/feeds.conf.default  # 路径改为lede
             lede/.config
 
       - name: 多线程编译 LEDE (Build LEDE multithreading)
         if: ${{ inputs.multithreading == true }}
-        working-directory: lede
-        run: |
-          make download -j$(nproc)
-          make V=s -j$(nproc) 2>&1 | tee compile_full.log
+        working-directory: lede  # 工作目录改为lede
+        run: make -j$(nproc) V=s 2>&1 | tee compile_full.log
 
       - name: 单线程编译 LEDE (Build LEDE single thread)
         if: ${{ inputs.multithreading == false }}
-        working-directory: lede
-        run: |
-          make download -j1
-          make V=s -j1 2>&1 | tee compile_full.log
+        working-directory: lede  # 工作目录改为lede
+        run: make -j1 V=s 2>&1 | tee compile_full.log
 
       - name: 上传完整编译日志 (Upload full compile log)
         uses: actions/upload-artifact@v4
         with:
           name: compile-logs-ssh
-          path: lede/compile_full.log
+          path: lede/compile_full.log  # 路径改为lede
 
       - name: 上传编译结果到 Artifact (Upload build result to Artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: LEDE-build-result-ssh
-          path: lede/bin/targets
+          name: LEDE-build-result-ssh  # 名称改为LEDE
+          path: lede/bin/targets  # 路径改为lede
         if: always()
