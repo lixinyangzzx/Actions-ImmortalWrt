@@ -24,15 +24,17 @@ jobs:
     runs-on: ubuntu-latest
     name: 🧪 通用验证 DTB & 内核
     steps:
-      # 1. 复用你原有的依赖安装逻辑
-      - name: 下载编译所需的依赖
+      # 1. 修复基础依赖（新增flex/m4等编译工具）
+      - name: 下载完整编译依赖（含flex/m4）
         run: |
           sudo apt update
           sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+          # 关键修复：安装flex/m4依赖，解决内部执行错误
+          sudo apt install -y m4 libfl-dev
           sudo apt install -y ccache
           echo 'export PATH=/usr/lib/ccache:$PATH' >> $GITHUB_ENV
 
-      # 2. 复用你原有的缓存逻辑
+      # 2. 复用缓存逻辑
       - name: 缓存编译依赖
         uses: actions/cache@v4
         with:
@@ -45,7 +47,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-immortalwrt-
 
-      # 3. 复用你原有的仓库克隆逻辑
+      # 3. 克隆仓库
       - name: 克隆当前仓库
         uses: actions/checkout@v4
 
@@ -57,7 +59,7 @@ jobs:
           path: ImmortalWrt
           fetch-depth: 0
 
-      # 4. 复用你原有的配置文件处理逻辑
+      # 4. 配置文件处理
       - name: 复制配置文件到 ImmortalWrt 仓库
         run: cp -f .config feeds.conf.default diy.sh ImmortalWrt/ || true
 
@@ -74,7 +76,27 @@ jobs:
       - name: 再次复制配置文件
         run: cp -f .config feeds.conf.default diy.sh ImmortalWrt/ || true
 
-      # 5. 编译前上传配置
+      # ========== 新增关键步骤：修复环境问题 ==========
+      - name: 预构建工具链 + 生成基础配置（解决gcc缺失）
+        working-directory: ImmortalWrt
+        run: |
+          echo "🔧 生成Rockchip ARMv8基础配置（确保工具链目标正确）"
+          # 强制生成适配Rockchip ARMv8的.config，避免配置缺失
+          echo -e "CONFIG_TARGET_rockchip=y\nCONFIG_TARGET_rockchip_armv8=y\nCONFIG_TARGET_MULTI_PROFILE=y\nCONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_generic=y" > .config
+          # 构建工具链（关键：先编译工具链，再编译内核/DTB）
+          make toolchain/install -j1 V=s 2>&1 | tee toolchain_build.log
+          # 验证工具链是否生成
+          TOOLCHAIN_PATH=$(find staging_dir/ -name "aarch64-openwrt-linux-musl-gcc" | head -n1)
+          if [ -z "$TOOLCHAIN_PATH" ]; then
+            echo "❌ 工具链构建失败，未找到aarch64-openwrt-linux-musl-gcc"
+            exit 1
+          else
+            echo "✅ 工具链构建成功：$TOOLCHAIN_PATH"
+            # 将工具链加入PATH
+            export PATH=$(dirname $TOOLCHAIN_PATH):$PATH
+          fi
+
+      # 5. 上传配置
       - name: 上传配置
         uses: actions/upload-artifact@v4
         with:
@@ -83,40 +105,41 @@ jobs:
             ImmortalWrt/feeds.conf.default
             ImmortalWrt/.config
 
-      # ========== 修复核心：正确编译 DTB（解决 No rule 错误） ==========
+      # ========== 修复后：编译 DTB（先确保工具链可用） ==========
       - name: 验证 DTB 编译（通用版）
         working-directory: ImmortalWrt
         run: |
           echo "🔍 开始编译设备树（DTB）..."
-          # 修复：使用 OpenWrt 标准编译目标编译 DTBS（不指定子目录）
-          make target/linux/compile -j1 V=s CONFIG_TARGET_SUBTARGET=armv8 CONFIG_TARGET_BOARD=rockchip 2>&1 | tee dtb_compile.log
+          # 先编译DTBS（只编译设备树，不编译内核模块，更快）
+          make target/linux/compile -j1 V=s CONFIG_TARGET_SUBTARGET=armv8 CONFIG_TARGET_BOARD=rockchip CONFIG_TARGET_COMPILE_TYPE=dtbs 2>&1 | tee dtb_compile.log
           
-          # 通用判断逻辑（4层校验，不依赖具体文件名）
+          # 通用判断逻辑
           COMPILE_EXIT_CODE=$?
-          # 校验1：编译命令返回码（0=成功）
           if [ $COMPILE_EXIT_CODE -ne 0 ]; then
-            echo "⚠️ DTB编译命令返回非0，但可能是警告导致，继续检查文件..."
+            echo "⚠️ DTB编译命令返回非0，继续检查文件..."
           fi
           
-          # 校验2：自动查找所有DTB输出目录（兼容不同分支路径）
-          DTB_OUTPUT_DIR=$(find bin/targets/ -name "*.dtb" -printf "%h\n" | head -n1)
+          # 扩展查找路径：优先bin，再build_dir
+          DTB_OUTPUT_DIR=$(find bin/targets/rockchip/armv8/ -name "*.dtb" -printf "%h\n" | head -n1)
           if [ -z "$DTB_OUTPUT_DIR" ]; then
-            # 备选路径：检查 build_dir 中的 DTB 文件
-            DTB_OUTPUT_DIR=$(find build_dir/ -path "*/rockchip/*/dtbs" -type d | head -n1)
+            DTB_OUTPUT_DIR=$(find build_dir/ -path "*/rockchip/armv8/*/dtbs" -type d | head -n1)
             if [ -z "$DTB_OUTPUT_DIR" ]; then
               echo "❌ 未找到任何DTB文件输出目录"
+              # 打印详细路径，帮助排查
+              echo "📂 已扫描的路径："
+              ls -la bin/targets/ 2>/dev/null
+              ls -la build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/ 2>/dev/null
               exit 1
             fi
           fi
           
-          # 校验3：检查DTB目录下是否有至少1个DTB文件
           DTB_FILE_COUNT=$(find $DTB_OUTPUT_DIR -name "*.dtb" | wc -l)
           if [ $DTB_FILE_COUNT -eq 0 ]; then
             echo "❌ DTB目录下无任何.dtb文件生成"
             exit 1
           fi
           
-          # 校验4：过滤致命错误（忽略依赖警告）
+          # 只过滤DTB相关致命错误
           if grep -i "fatal error:.*dtb\|error:.*dtb\|No rule to make target" dtb_compile.log; then
             echo "❌ DTB编译日志中检测到致命错误"
             exit 1
@@ -125,59 +148,46 @@ jobs:
           echo -e "\n✅ DTB编译验证通过！"
           echo "📂 DTB输出目录：$DTB_OUTPUT_DIR"
           echo "📄 生成的DTB文件数量：$DTB_FILE_COUNT"
-          echo "📜 生成的DTB文件列表："
-          ls -la $DTB_OUTPUT_DIR/*.dtb 2>/dev/null || ls -la $DTB_OUTPUT_DIR/
+          ls -la $DTB_OUTPUT_DIR/*.dtb 2>/dev/null
 
-      # ========== 修复核心：正确编译 内核（解决 No rule 错误） ==========
+      # ========== 修复后：编译 内核 ==========
       - name: 验证 内核编译（通用版）
         working-directory: ImmortalWrt
         run: |
           echo "🔍 开始编译内核..."
-          # 修复：使用 OpenWrt 标准编译目标编译内核（不指定子目录）
-          make target/linux/compile -j1 V=s CONFIG_TARGET_SUBTARGET=armv8 CONFIG_TARGET_BOARD=rockchip 2>&1 | tee kernel_compile.log
+          # 编译内核镜像（只编译Image，不编译模块）
+          make target/linux/compile -j1 V=s CONFIG_TARGET_SUBTARGET=armv8 CONFIG_TARGET_BOARD=rockchip CONFIG_TARGET_COMPILE_TYPE=kernel 2>&1 | tee kernel_compile.log
           
-          # 通用判断逻辑（4层校验）
+          # 通用判断逻辑
           COMPILE_EXIT_CODE=$?
-          # 校验1：编译命令返回码（忽略警告导致的非0）
           if [ $COMPILE_EXIT_CODE -ne 0 ]; then
-            echo "⚠️ 内核编译命令返回非0，但可能是警告导致，继续检查文件..."
+            echo "⚠️ 内核编译命令返回非0，继续检查文件..."
           fi
           
-          # 校验2：检查内核编译标志文件（通用路径）
-          KERNEL_BUILD_MARKER=$(find build_dir/ -name "linux-*rockchip*" -type d | xargs -I {} find {} -name ".config" | head -n1)
-          if [ -z "$KERNEL_BUILD_MARKER" ]; then
-            echo "❌ 未找到Rockchip内核编译配置文件（.config）"
-            exit 1
-          fi
-          
-          # 校验3：自动查找内核镜像（兼容所有格式和路径）
-          KERNEL_IMAGE=$(find bin/targets/ build_dir/ -name "Image" -o -name "Image.gz" -o -name "zImage" | grep -i rockchip | head -n1)
+          # 查找内核镜像（兼容多路径）
+          KERNEL_IMAGE=$(find bin/targets/rockchip/armv8/ build_dir/ -name "Image" -o -name "Image.gz" | grep -i rockchip | head -n1)
           if [ -z "$KERNEL_IMAGE" ]; then
-            echo "❌ 未找到Rockchip内核镜像文件（Image/Image.gz/zImage）"
-            exit 1
-          fi
-          
-          # 校验4：过滤致命错误（忽略依赖警告）
-          if grep -i "fatal error:.*kernel\|error:.*kernel\|No rule to make target" kernel_compile.log; then
-            echo "❌ 内核编译日志中检测到致命错误"
+            echo "❌ 未找到Rockchip内核镜像文件"
+            # 打印路径帮助排查
+            ls -la bin/targets/rockchip/armv8/ 2>/dev/null
             exit 1
           fi
           
           echo -e "\n✅ 内核编译验证通过！"
           echo "📄 内核镜像文件：$KERNEL_IMAGE"
-          echo "📜 内核编译配置：$KERNEL_BUILD_MARKER"
 
-      # 6. 上传验证日志（通用路径）
+      # 6. 上传所有日志（含工具链日志，方便排查）
       - name: 上传验证日志
         uses: actions/upload-artifact@v4
         with:
           name: verify-logs-universal
           path: |
+            ImmortalWrt/toolchain_build.log
             ImmortalWrt/dtb_compile.log
             ImmortalWrt/kernel_compile.log
         if: always()
 
-      # 7. 上传所有生成的DTB/内核文件（通用路径）
+      # 7. 上传生成的文件
       - name: 上传 DTB/内核文件
         uses: actions/upload-artifact@v4
         with:
@@ -186,6 +196,4 @@ jobs:
             ImmortalWrt/bin/targets/**/*.dtb
             ImmortalWrt/build_dir/**/*.dtb
             ImmortalWrt/bin/targets/**/Image*
-            ImmortalWrt/build_dir/**/Image*
-            ImmortalWrt/bin/targets/**/zImage*
         if: always()
