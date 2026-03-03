@@ -1,4 +1,4 @@
-name: 🚀 编译LEDE (Build)
+name: 🚀 编译 (Build)
 
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ on:
 
 jobs:
   build:
-    if: ${{ inputs.ssh == false }}
+    if: ${{inputs.ssh == false}}
     runs-on: ubuntu-latest
     name: 🚀 编译 (Build)
     steps:
@@ -37,8 +37,6 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
-          # 清理可能残留的ccache缓存
-          ccache -C || true
 
       - name: 克隆当前仓库 (Clone current repo)
         uses: actions/checkout@v4
@@ -46,26 +44,25 @@ jobs:
       - name: 克隆 LEDE 仓库 (Clone LEDE repo)
         uses: actions/checkout@v4
         with:
-          repository: '${{ inputs.owner }}/${{ inputs.repo }}'
-          ref: ${{ inputs.branch }}
+          repository: '${{inputs.owner}}/${{inputs.repo}}'
+          ref: ${{inputs.branch}}
           path: lede
-          fetch-depth: 0  # 拉取完整历史，避免编译报错
 
-      - name: 复制配置文件到 LEDE 仓库 (Copy config to LEDE repo)
-        run: cp -f lede/.config lede/feeds.conf.default lede/diy.sh lede/ || true
+      - name: 复制 lede 文件夹的配置文件到编译目录 (Copy config from lede folder to build dir)
+        run: cp -f lede/.config lede/feeds.conf.default lede/diy.sh lede/  # 从根目录lede文件夹读取配置
 
       - name: 运行 diy.sh (Run diy.sh)
         working-directory: lede
         run: |
-          chmod +x diy.sh || true
-          ./diy.sh || true
+          chmod +x diy.sh
+          ./diy.sh
 
       - name: 更新并下载 feeds (Update and download feeds)
         working-directory: lede
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 再次复制配置文件到 LEDE 仓库 (Copy config to LEDE repo again)
-        run: cp -f lede/.config lede/feeds.conf.default lede/diy.sh lede/ || true
+      - name: 再次复制 lede 文件夹的配置文件到编译目录 (Copy config from lede folder to build dir again)
+        run: cp -f lede/.config lede/feeds.conf.default lede/diy.sh lede/  # 再次从根目录lede文件夹读取
 
       - name: 编译前上传配置 (Upload config before build)
         uses: actions/upload-artifact@v4
@@ -76,56 +73,23 @@ jobs:
             lede/.config
 
       - name: 多线程编译 LEDE (Build LEDE multithreading)
-        if: ${{ inputs.multithreading == true }}
+        if: ${{inputs.multithreading == true}}
         working-directory: lede
-        run: |
-          # 清理编译残留
-          make clean || true
-          make dirclean || true
-          # 编译并保存完整日志，避免截断
-          make -j$(nproc) V=s 2>&1 | tee compile_full.log
-          # 检查编译是否成功
-          if [ $? -ne 0 ]; then
-            echo "多线程编译失败，尝试单线程重试..."
-            make -j1 V=s 2>&1 | tee compile_retry.log
-          fi
+        run: make -j$(nproc) V=s
 
       - name: 单线程编译 LEDE (Build LEDE single thread)
-        if: ${{ inputs.multithreading == false }}
+        if: ${{inputs.multithreading == false}}
         working-directory: lede
-        run: |
-          # 清理编译残留
-          make clean || true
-          make dirclean || true
-          make -j1 V=s 2>&1 | tee compile_full.log
-
-      - name: 上传完整编译日志 (Upload full compile log)
-        uses: actions/upload-artifact@v4
-        with:
-          name: compile-logs
-          path: |
-            lede/compile_full.log
-            lede/compile_retry.log*
-
-      - name: 列出编译结果目录 (List build result directory)
-        run: |
-          # 列出文件，确认固件是否生成
-          ls -la lede/bin/targets/ || true
-          # 查看固件文件大小
-          du -sh lede/bin/targets/* || true
+        run: make -j1 V=s
 
       - name: 上传编译结果到 Artifact (Upload build result to Artifact)
         uses: actions/upload-artifact@v4
         with:
           name: LEDE-build-result
-          path: |
-            lede/bin/targets/**/*  # 递归上传所有编译产物
-            lede/bin/*.img*        # 确保img格式固件被上传
-            lede/bin/*.bin*        # 确保bin格式固件被上传
-        if: always()  # 即使编译失败也上传结果
+          path: lede/bin/targets
 
   build-ssh:
-    if: ${{ inputs.ssh == true }}
+    if: ${{inputs.ssh == true}}
     name: 🚀 编译 (Build) - SSH
     runs-on: ubuntu-latest
     steps:
@@ -140,18 +104,22 @@ jobs:
       - name: 克隆 LEDE 仓库 (Clone LEDE repo)
         uses: actions/checkout@v4
         with:
-          repository: '${{ inputs.owner }}/${{ inputs.repo }}'
-          ref: ${{ inputs.branch }}
+          repository: '${{inputs.owner}}/${{inputs.repo}}'
+          ref: ${{inputs.branch}}
           path: lede
-          fetch-depth: 0
 
       - name: 开启 SSH 服务 (Start SSH service)
         uses: lhotari/action-upterm@v1
         with:
           wait-timeout-minutes: 20
 
-      - name: 复制配置文件到 LEDE 仓库 (Copy config to LEDE repo)
-        run: cp -f lede/.config lede/feeds.conf.default lede/diy.sh lede/ || true
+#      # 你也可以使用这个，个人觉得它更好用 (You can use this, I personally think it is better)
+#      - name: 开启 SSH 服务 (Start SSH service)
+#        uses: mxschmitt/action-tmate@v3
+#        timeout-minutes: 15
+
+      - name: 复制 lede 文件夹的配置文件到编译目录 (Copy config from lede folder to build dir)
+        run: cp -f lede/.config lede/feeds.conf.default lede/diy.sh lede/
 
       - name: 编译前上传配置 (Upload config before build)
         uses: actions/upload-artifact@v4
@@ -162,38 +130,17 @@ jobs:
             lede/.config
 
       - name: 多线程编译 LEDE (Build LEDE multithreading)
-        if: ${{ inputs.multithreading == true }}
+        if: ${{inputs.multithreading == true}}
         working-directory: lede
-        run: |
-          make clean || true
-          make dirclean || true
-          make -j$(nproc) V=s 2>&1 | tee compile_full.log
+        run: make -j$(nproc) V=s
 
       - name: 单线程编译 LEDE (Build LEDE single thread)
-        if: ${{ inputs.multithreading == false }}
+        if: ${{inputs.multithreading == false}}
         working-directory: lede
-        run: |
-          make clean || true
-          make dirclean || true
-          make -j1 V=s 2>&1 | tee compile_full.log
-
-      - name: 上传完整编译日志 (Upload full compile log)
-        uses: actions/upload-artifact@v4
-        with:
-          name: compile-logs-ssh
-          path: lede/compile_full.log
-
-      - name: 列出编译结果目录 (List build result directory)
-        run: |
-          ls -la lede/bin/targets/ || true
-          du -sh lede/bin/targets/* || true
+        run: make -j1 V=s
 
       - name: 上传编译结果到 Artifact (Upload build result to Artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: LEDE-build-result-ssh
-          path: |
-            lede/bin/targets/**/*
-            lede/bin/*.img*
-            lede/bin/*.bin*
-        if: always()
+          name: LEDE-build-result
+          path: lede/bin/targets
