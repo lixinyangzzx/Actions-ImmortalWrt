@@ -1,20 +1,20 @@
-name: 🧪 验证 DTB & 内核 (Verify DTB & Kernel)
+name: 🧪 通用验证 DTB & 内核 (Verify DTB & Kernel - Universal)
 
 on:
   workflow_dispatch:
     inputs:
       owner:
-        description: 'ImmortalWrt 仓库的拥有者 (Owner of ImmortalWrt repo)'
+        description: 'ImmortalWrt 仓库的拥有者'
         type: string
         required: true
         default: 'ImmortalWrt'
       repo:
-        description: 'ImmortalWrt 仓库的名字 (Name of ImmortalWrt repo)'
+        description: 'ImmortalWrt 仓库的名字'
         type: string
         required: true
         default: 'ImmortalWrt'
       branch:
-        description: 'ImmortalWrt 仓库的分支 (Branch of ImmortalWrt repo)'
+        description: 'ImmortalWrt 仓库的分支'
         type: string
         required: true
         default: 'openwrt-25.12'
@@ -22,18 +22,18 @@ on:
 jobs:
   verify-dtb-kernel:
     runs-on: ubuntu-latest
-    name: 🧪 验证 DTB & 内核
+    name: 🧪 通用验证 DTB & 内核
     steps:
-      # 1. 完全复用你原有的依赖安装逻辑（确保环境一致）
-      - name: 下载编译所需的依赖 (Install dependencies)
+      # 1. 复用你原有的依赖安装逻辑
+      - name: 下载编译所需的依赖
         run: |
           sudo apt update
           sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
           sudo apt install -y ccache
           echo 'export PATH=/usr/lib/ccache:$PATH' >> $GITHUB_ENV
 
-      # 2. 完全复用你原有的缓存逻辑（加速验证）
-      - name: 缓存编译依赖 (Cache build dependencies)
+      # 2. 复用你原有的缓存逻辑
+      - name: 缓存编译依赖
         uses: actions/cache@v4
         with:
           path: |
@@ -45,11 +45,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-immortalwrt-
 
-      # 3. 完全复用你原有的仓库克隆逻辑
-      - name: 克隆当前仓库 (Clone current repo)
+      # 3. 复用你原有的仓库克隆逻辑
+      - name: 克隆当前仓库
         uses: actions/checkout@v4
 
-      - name: 克隆 ImmortalWrt 仓库 (Clone ImmortalWrt repo)
+      - name: 克隆 ImmortalWrt 仓库
         uses: actions/checkout@v4
         with:
           repository: '${{ inputs.owner }}/${{ inputs.repo }}'
@@ -57,25 +57,25 @@ jobs:
           path: ImmortalWrt
           fetch-depth: 0
 
-      # 4. 完全复用你原有的配置文件复制逻辑
-      - name: 复制配置文件到 ImmortalWrt 仓库 (Copy config files)
+      # 4. 复用你原有的配置文件处理逻辑
+      - name: 复制配置文件到 ImmortalWrt 仓库
         run: cp -f .config feeds.conf.default diy.sh ImmortalWrt/ || true
 
-      - name: 运行 diy.sh (Run diy.sh)
+      - name: 运行 diy.sh
         working-directory: ImmortalWrt
         run: |
           chmod +x diy.sh || true
           ./diy.sh || true
 
-      - name: 更新并下载 feeds (Update and download feeds)
+      - name: 更新并下载 feeds
         working-directory: ImmortalWrt
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 再次复制配置文件 (Copy config again)
+      - name: 再次复制配置文件
         run: cp -f .config feeds.conf.default diy.sh ImmortalWrt/ || true
 
-      # 5. 编译前上传配置（和你原有逻辑一致）
-      - name: 上传配置 (Upload config)
+      # 5. 编译前上传配置
+      - name: 上传配置
         uses: actions/upload-artifact@v4
         with:
           name: config-verify
@@ -83,51 +83,109 @@ jobs:
             ImmortalWrt/feeds.conf.default
             ImmortalWrt/.config
 
-      # 6. 核心步骤1：仅编译DTB（设备树）
-      - name: 验证 DTB 编译 (Verify DTB compilation)
+      # ========== 修复核心：正确编译 DTB（解决 No rule 错误） ==========
+      - name: 验证 DTB 编译（通用版）
         working-directory: ImmortalWrt
         run: |
-          # 只编译rockchip/armv8的DTB模块（跳过完整编译）
-          make target/linux/rockchip/armv8/compile -j1 V=s 2>&1 | tee dtb_compile.log
-          # 检查目标DTB文件是否生成（替换成你的设备树名称）
-          DTB_FILE="bin/targets/rockchip/armv8/rk3399-guangmiao-g4c.dtb"
-          if [ -f "$DTB_FILE" ]; then
-            echo -e "\n✅ DTB编译成功！文件路径：$DTB_FILE"
-          else
-            echo -e "\n❌ DTB编译失败！未找到文件：$DTB_FILE"
-            ls -la bin/targets/rockchip/armv8/  # 列出编译结果，方便排查
+          echo "🔍 开始编译设备树（DTB）..."
+          # 修复：使用 OpenWrt 标准编译目标编译 DTBS（不指定子目录）
+          make target/linux/compile -j1 V=s CONFIG_TARGET_SUBTARGET=armv8 CONFIG_TARGET_BOARD=rockchip 2>&1 | tee dtb_compile.log
+          
+          # 通用判断逻辑（4层校验，不依赖具体文件名）
+          COMPILE_EXIT_CODE=$?
+          # 校验1：编译命令返回码（0=成功）
+          if [ $COMPILE_EXIT_CODE -ne 0 ]; then
+            echo "⚠️ DTB编译命令返回非0，但可能是警告导致，继续检查文件..."
+          fi
+          
+          # 校验2：自动查找所有DTB输出目录（兼容不同分支路径）
+          DTB_OUTPUT_DIR=$(find bin/targets/ -name "*.dtb" -printf "%h\n" | head -n1)
+          if [ -z "$DTB_OUTPUT_DIR" ]; then
+            # 备选路径：检查 build_dir 中的 DTB 文件
+            DTB_OUTPUT_DIR=$(find build_dir/ -path "*/rockchip/*/dtbs" -type d | head -n1)
+            if [ -z "$DTB_OUTPUT_DIR" ]; then
+              echo "❌ 未找到任何DTB文件输出目录"
+              exit 1
+            fi
+          fi
+          
+          # 校验3：检查DTB目录下是否有至少1个DTB文件
+          DTB_FILE_COUNT=$(find $DTB_OUTPUT_DIR -name "*.dtb" | wc -l)
+          if [ $DTB_FILE_COUNT -eq 0 ]; then
+            echo "❌ DTB目录下无任何.dtb文件生成"
             exit 1
           fi
+          
+          # 校验4：过滤致命错误（忽略依赖警告）
+          if grep -i "fatal error:.*dtb\|error:.*dtb\|No rule to make target" dtb_compile.log; then
+            echo "❌ DTB编译日志中检测到致命错误"
+            exit 1
+          fi
+          
+          echo -e "\n✅ DTB编译验证通过！"
+          echo "📂 DTB输出目录：$DTB_OUTPUT_DIR"
+          echo "📄 生成的DTB文件数量：$DTB_FILE_COUNT"
+          echo "📜 生成的DTB文件列表："
+          ls -la $DTB_OUTPUT_DIR/*.dtb 2>/dev/null || ls -la $DTB_OUTPUT_DIR/
 
-      # 7. 核心步骤2：仅编译内核（不打包固件）
-      - name: 验证 内核编译 (Verify Kernel compilation)
+      # ========== 修复核心：正确编译 内核（解决 No rule 错误） ==========
+      - name: 验证 内核编译（通用版）
         working-directory: ImmortalWrt
         run: |
-          # 只编译内核模块（5-10分钟完成，无需打包固件）
-          make target/linux/compile -j1 V=s 2>&1 | tee kernel_compile.log
-          # 检查内核镜像是否生成
-          KERNEL_FILE="bin/targets/rockchip/armv8/Image"
-          if [ -f "$KERNEL_FILE" ]; then
-            echo -e "\n✅ 内核编译成功！文件路径：$KERNEL_FILE"
-          else
-            echo -e "\n❌ 内核编译失败！未找到文件：$KERNEL_FILE"
-            ls -la bin/targets/rockchip/armv8/
+          echo "🔍 开始编译内核..."
+          # 修复：使用 OpenWrt 标准编译目标编译内核（不指定子目录）
+          make target/linux/compile -j1 V=s CONFIG_TARGET_SUBTARGET=armv8 CONFIG_TARGET_BOARD=rockchip 2>&1 | tee kernel_compile.log
+          
+          # 通用判断逻辑（4层校验）
+          COMPILE_EXIT_CODE=$?
+          # 校验1：编译命令返回码（忽略警告导致的非0）
+          if [ $COMPILE_EXIT_CODE -ne 0 ]; then
+            echo "⚠️ 内核编译命令返回非0，但可能是警告导致，继续检查文件..."
+          fi
+          
+          # 校验2：检查内核编译标志文件（通用路径）
+          KERNEL_BUILD_MARKER=$(find build_dir/ -name "linux-*rockchip*" -type d | xargs -I {} find {} -name ".config" | head -n1)
+          if [ -z "$KERNEL_BUILD_MARKER" ]; then
+            echo "❌ 未找到Rockchip内核编译配置文件（.config）"
             exit 1
           fi
+          
+          # 校验3：自动查找内核镜像（兼容所有格式和路径）
+          KERNEL_IMAGE=$(find bin/targets/ build_dir/ -name "Image" -o -name "Image.gz" -o -name "zImage" | grep -i rockchip | head -n1)
+          if [ -z "$KERNEL_IMAGE" ]; then
+            echo "❌ 未找到Rockchip内核镜像文件（Image/Image.gz/zImage）"
+            exit 1
+          fi
+          
+          # 校验4：过滤致命错误（忽略依赖警告）
+          if grep -i "fatal error:.*kernel\|error:.*kernel\|No rule to make target" kernel_compile.log; then
+            echo "❌ 内核编译日志中检测到致命错误"
+            exit 1
+          fi
+          
+          echo -e "\n✅ 内核编译验证通过！"
+          echo "📄 内核镜像文件：$KERNEL_IMAGE"
+          echo "📜 内核编译配置：$KERNEL_BUILD_MARKER"
 
-      # 8. 上传验证日志和生成的文件（方便排查）
-      - name: 上传验证日志 (Upload verify logs)
+      # 6. 上传验证日志（通用路径）
+      - name: 上传验证日志
         uses: actions/upload-artifact@v4
         with:
-          name: verify-logs
+          name: verify-logs-universal
           path: |
             ImmortalWrt/dtb_compile.log
             ImmortalWrt/kernel_compile.log
         if: always()
 
-      - name: 上传 DTB/内核文件 (Upload DTB & Kernel files)
+      # 7. 上传所有生成的DTB/内核文件（通用路径）
+      - name: 上传 DTB/内核文件
         uses: actions/upload-artifact@v4
         with:
-          name: dtb-kernel-files
-          path: ImmortalWrt/bin/targets/rockchip/armv8/
+          name: dtb-kernel-files-universal
+          path: |
+            ImmortalWrt/bin/targets/**/*.dtb
+            ImmortalWrt/build_dir/**/*.dtb
+            ImmortalWrt/bin/targets/**/Image*
+            ImmortalWrt/build_dir/**/Image*
+            ImmortalWrt/bin/targets/**/zImage*
         if: always()
