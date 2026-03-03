@@ -1,0 +1,127 @@
+name: 🧪 快速验证 DTB & 内核 (Verify DTB & Kernel)
+
+on:
+  workflow_dispatch:
+    inputs:
+      owner:
+        description: 'ImmortalWrt 仓库拥有者'
+        type: string
+        required: true
+        default: 'ImmortalWrt'
+      repo:
+        description: 'ImmortalWrt 仓库名称'
+        type: string
+        required: true
+        default: 'ImmortalWrt'
+      branch:
+        description: 'ImmortalWrt 仓库分支'
+        type: string
+        required: true
+        default: 'openwrt-25.12'
+
+jobs:
+  verify-dtb-kernel:
+    runs-on: ubuntu-latest
+    name: 🧪 验证 DTB & 内核
+    steps:
+      - name: 安装基础依赖 (Install basic dependencies)
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            build-essential gcc-multilib g++-multilib git \
+            device-tree-compiler ccache libncurses5-dev \
+            libssl-dev flex bison wget curl cpio unzip \
+            python3 python3-pyelftools
+
+      - name: 缓存编译依赖 (Cache build dependencies)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ImmortalWrt/staging_dir
+            ImmortalWrt/dl
+            ImmortalWrt/feeds
+            ~/.ccache
+          key: ${{ runner.os }}-immortalwrt-verify-${{ hashFiles('ImmortalWrt/.config', 'ImmortalWrt/feeds.conf.default') }}
+          restore-keys: |
+            ${{ runner.os }}-immortalwrt-verify-
+            ${{ runner.os }}-immortalwrt-
+
+      - name: 克隆当前仓库 (Clone current repo)
+        uses: actions/checkout@v4
+
+      - name: 克隆 ImmortalWrt 仓库 (Clone ImmortalWrt repo)
+        uses: actions/checkout@v4
+        with:
+          repository: '${{ inputs.owner }}/${{ inputs.repo }}'
+          ref: ${{ inputs.branch }}
+          path: ImmortalWrt
+          fetch-depth: 0
+
+      - name: 复制配置文件 (Copy config files)
+        run: cp -f .config feeds.conf.default diy.sh ImmortalWrt/ || true
+
+      - name: 运行 diy.sh (Run diy.sh)
+        working-directory: ImmortalWrt
+        run: |
+          chmod +x diy.sh || true
+          ./diy.sh || true
+
+      - name: 更新 feeds (Update feeds)
+        working-directory: ImmortalWrt
+        run: ./scripts/feeds update -a && ./scripts/feeds install -a
+
+      - name: 再次复制配置文件 (Copy config again)
+        run: cp -f .config feeds.conf.default diy.sh ImmortalWrt/ || true
+
+      - name: 第一步：单独验证 DTB 语法 (Step 1: Verify DTB syntax only)
+        working-directory: ImmortalWrt
+        run: |
+          # 直接编译设备树（最快，1分钟内完成）
+          make target/linux/rockchip/armv8/compile -j1 V=s \
+            CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_huake_guangmiao-g4c=y
+          # 验证生成的DTB文件是否存在
+          DTB_FILE="bin/targets/rockchip/armv8/rk3399-guangmiao-g4c.dtb"
+          if [ -f "$DTB_FILE" ]; then
+            echo "✅ DTB 编译成功！文件路径：$DTB_FILE"
+            # 反编译DTB验证内容（可选）
+            dtc -I dtb -O dts "$DTB_FILE" -o verify_dtb.dts
+            echo "✅ DTB 反编译成功，可查看 verify_dtb.dts 确认内容"
+          else
+            echo "❌ DTB 编译失败！未生成 $DTB_FILE"
+            exit 1
+          fi
+
+      - name: 第二步：验证内核编译 (Step 2: Verify kernel compilation)
+        working-directory: ImmortalWrt
+        run: |
+          # 只编译内核（不打包固件，5-10分钟完成）
+          make target/linux/compile -j$(nproc) V=s \
+            CONFIG_TARGET_rockchip_armv8=y \
+            CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_huake_guangmiao-g4c=y
+          # 验证内核镜像是否生成
+          KERNEL_FILE="bin/targets/rockchip/armv8/Image"
+          if [ -f "$KERNEL_FILE" ]; then
+            echo "✅ 内核编译成功！文件路径：$KERNEL_FILE"
+          else
+            echo "❌ 内核编译失败！未生成 $KERNEL_FILE"
+            exit 1
+          fi
+
+      - name: 上传验证日志 (Upload verify logs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-logs
+          path: |
+            ImmortalWrt/verify_dtb.dts
+            ImmortalWrt/build_dir/target-aarch64_generic_musl/linux-rockchip_armv8/linux-*/.config
+            ImmortalWrt/staging_dir/target-aarch64_generic_musl/logs/*
+        if: always()
+
+      - name: 上传生成的 DTB/内核文件 (Upload DTB & Kernel files)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtb-kernel-files
+          path: |
+            ImmortalWrt/bin/targets/rockchip/armv8/rk3399-guangmiao-g4c.dtb
+            ImmortalWrt/bin/targets/rockchip/armv8/Image
+        if: always()
